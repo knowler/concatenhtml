@@ -2,6 +2,19 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/deno";
 import { stream } from "hono/streaming";
 
+// TODO: handle more than one chunk
+class SkipTrailingLineFeedStream extends TransformStream {
+	constructor() {
+		super({
+			async transform(chunk, controller) {
+				chunk = await chunk;
+				if (chunk === null) controller.terminate();
+				else controller.enqueue(chunk.at(-1) === 0x0a ? chunk.slice(0, chunk.length - 1) : chunk);
+			},
+		});
+	}
+}
+
 const app = new Hono();
 
 app.use("*", serveStatic({ root: "./assets" }));
@@ -16,7 +29,9 @@ app.get("/:page?", async (c, next) => {
 		using template = await Deno.open(`./views/${basicPages.includes(slug) ? "page-no-js" : "page"}.html`, { read: true });
 		using content = await Deno.open(`./content/${slug ?? "index"}.html`, { read: true });
 
-		await stream.pipe(template.readable);
+		await stream.pipe(
+			await template.readable.pipeThrough(new SkipTrailingLineFeedStream()),
+		);
 		await stream.pipe(content.readable);
 	});
 });
